@@ -2,7 +2,10 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/pflag"
@@ -12,59 +15,95 @@ const TimeFormat = "2006-01-02 15:04:05"
 
 func main() {
 	var seconds int
-	pflag.IntVarP(&seconds, "seconds", "s", 10, "需要休眠的秒数")
+	pflag.IntVarP(&seconds, "seconds", "s", 10, "Number of seconds to sleep")
 	pflag.Parse()
 
 	if seconds <= 0 {
-		fmt.Println("无效的时间参数，必须大于0")
+		fmt.Println("Invalid time parameter, must be greater than 0")
 		pflag.Usage()
 		return
 	}
 
 	for {
-		fmt.Printf("开始启动: %v\n", time.Now().Format(TimeFormat))
+		fmt.Printf("New process started: %v\n", time.Now().Format(TimeFormat))
 		cmd := exec.Command("/bin/sleep", fmt.Sprintf("%d", seconds))
 		startTime := time.Now()
-		fmt.Printf("开始执行%d秒命令: %v\n", seconds, startTime.Format(TimeFormat))
+		fmt.Printf("Executing %d-second command: %v\n", seconds, startTime.Format(TimeFormat))
 
 		if err := cmd.Start(); err != nil {
-			fmt.Printf("命令启动失败: %v\n", err)
+			fmt.Printf("Command failed to start: %v\n", err)
 			continue
 		}
 
-		// 获取并记录进程PID
+		// Get and log process PID
 		pid := cmd.Process.Pid
-		fmt.Printf("进程PID %d 已启动\n", pid)
+		fmt.Printf("Process PID %d started\n", pid)
 
 		done := make(chan error)
 		go func() { done <- cmd.Wait() }()
 
-		timeoutLogged := false
 	checkLoop:
 		for {
 			select {
 			case err := <-done:
 				if err != nil {
-					fmt.Printf("命令执行错误: %v\n", err)
+					fmt.Printf("Command execution error: %v\n", err)
 				} else {
 					endTime := time.Now()
-					fmt.Printf("命令完成于: %v (耗时: %v)\n",
+					fmt.Printf("Command completed at: %v (duration: %v)\n",
 						endTime.Format(TimeFormat),
 						endTime.Sub(startTime).Round(time.Second))
 				}
 				break checkLoop
 			case <-time.After(1 * time.Second):
 				elapsed := time.Since(startTime)
-				fmt.Printf("命令已运行: %v秒\n", elapsed.Round(time.Second))
-				// 超时检测逻辑
-				if elapsed > time.Duration(seconds*2)*time.Second && !timeoutLogged {
-					fmt.Printf("错误: 进程 %d 执行超时（预期%d秒，已运行%d秒）\n",
+				fmt.Printf("Command has been running: %v seconds\n", elapsed.Round(time.Second))
+				// Timeout detection
+				if elapsed > (time.Duration(seconds*2) * time.Second) {
+					fmt.Printf("ERROR: Process %d timeout (expected %ds, elapsed %ds)\n",
 						pid,
 						seconds*2,
 						int(elapsed.Seconds()))
-					timeoutLogged = true
+
+					// New stack reading logic
+					fmt.Printf("Process stack trace:\n%s\n", readProcStack(pid))
+					fmt.Printf("Thread stacks:\n%s\n", readThreadStacks(pid))
 				}
 			}
 		}
 	}
+}
+
+// Add these new functions at the bottom of the file
+func readProcStack(pid int) string {
+	stackPath := fmt.Sprintf("/proc/%d/stack", pid)
+	content, err := os.ReadFile(stackPath)
+	if err != nil {
+		return fmt.Sprintf("Failed to read process stack: %v", err)
+	}
+	return string(content)
+}
+
+func readThreadStacks(pid int) string {
+	var builder strings.Builder
+	taskDir := fmt.Sprintf("/proc/%d/task", pid)
+
+	entries, err := os.ReadDir(taskDir)
+	if err != nil {
+		return fmt.Sprintf("Failed to read task directory: %v", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			tid := entry.Name()
+			stackPath := filepath.Join(taskDir, tid, "stack")
+			content, err := os.ReadFile(stackPath)
+			if err != nil {
+				builder.WriteString(fmt.Sprintf("Thread %s stack error: %v\n", tid, err))
+				continue
+			}
+			builder.WriteString(fmt.Sprintf("Thread %s stack:\n%s\n", tid, content))
+		}
+	}
+	return builder.String()
 }
