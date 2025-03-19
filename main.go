@@ -20,13 +20,26 @@ func main() {
 			continue
 		}
 
-		if err := cmd.Wait(); err != nil {
-			fmt.Printf("命令执行错误: %v\n", err)
-		} else {
-			endTime := time.Now()
-			fmt.Printf("命令完成于: %v (耗时: %v)\n",
-				endTime.Format(TimeFormat),
-				endTime.Sub(startTime).Round(time.Second))
+		done := make(chan error)
+		go func() { done <- cmd.Wait() }()
+
+		// 异步状态检查循环
+	checkLoop:
+		for {
+			select {
+			case err := <-done:
+				if err != nil {
+					fmt.Printf("命令执行错误: %v\n", err)
+				} else {
+					endTime := time.Now()
+					fmt.Printf("命令完成于: %v (耗时: %v)\n",
+						endTime.Format(TimeFormat),
+						endTime.Sub(startTime).Round(time.Second))
+				}
+				break checkLoop
+			case <-time.After(1 * time.Second):
+				fmt.Printf("命令已运行: %v秒\n", time.Since(startTime).Round(time.Second))
+			}
 		}
 	}
 }
