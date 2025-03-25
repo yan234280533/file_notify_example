@@ -9,13 +9,16 @@ import (
 	"time"
 
 	"github.com/spf13/pflag"
+	"runtime"
 )
 
 const TimeFormat = "2006-01-02 15:04:05"
 
 func main() {
 	var seconds int
+	var enableSysrq bool // 新增开关变量
 	pflag.IntVarP(&seconds, "seconds", "s", 10, "Number of seconds to sleep")
+	pflag.BoolVarP(&enableSysrq, "sysrq", "r", false, "Enable sysrq-trigger on timeout") // 新增参数
 	pflag.Parse()
 
 	if seconds <= 0 {
@@ -25,7 +28,7 @@ func main() {
 	}
 
 	for {
-		fmt.Printf("New process started: %v\n", time.Now().Format(TimeFormat))
+		fmt.Printf("New process started 001: %v\n", time.Now().Format(TimeFormat))
 		cmd := exec.Command("/bin/sleep", fmt.Sprintf("%d", seconds))
 		startTime := time.Now()
 		fmt.Printf("Executing %d-second command: %v\n", seconds, startTime.Format(TimeFormat))
@@ -64,6 +67,15 @@ func main() {
 						pid,
 						seconds*2,
 						int(elapsed.Seconds()))
+
+					// 添加条件判断
+					if enableSysrq && runtime.GOOS == "linux" {
+						if err := os.WriteFile("/proc/sysrq-trigger", []byte("c"), 0200); err != nil {
+							fmt.Printf("Failed to trigger sysrq: %v (try running with sudo)\n", err)
+						} else {
+							fmt.Println("Triggered kernel stack trace via sysrq")
+						}
+					}
 
 					// New stack reading logic
 					fmt.Printf("Process stack trace:\n%s\n", readProcStack(pid))
